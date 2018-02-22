@@ -1,0 +1,207 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Evan Falcone"
+date: "14 February 2017"
+output:
+  html_document:
+    theme: united
+    toc: yes
+  pdf_document:
+    toc: yes
+header-includes: \usepackage{color}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Introduction
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here (see the section on the Weight Lifting Exercise Dataset).](http://groupware.les.inf.puc-rio.br/har)
+
+### Data
+
+The training data for this project are available [here.](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available [here.](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from [this source.](http://groupware.les.inf.puc-rio.br/har>) If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+### Goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the “classe” variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+## Getting and Loading the Data
+
+```{r loadPackages}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+
+# set.seed(12345) # test seed, compare to bookmark
+set.seed(12345)
+
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+
+#### Partition the test and training sets using the caret package createDataPartition function:
+
+```{r partition}
+inTrain <- createDataPartition(training$classe, p=0.6, list=FALSE)
+myTraining <- training[inTrain, ]
+myTesting <- training[-inTrain, ]
+# print the dimensions of myTraining and myTesting for exploratory purposes:
+dim(myTraining); dim(myTesting)
+```
+
+## Data Cleaning/Prep
+
+#### Remove Near-Zero variance variables:
+
+```{r zeroVar}
+nzv <- nearZeroVar(myTraining, saveMetrics=TRUE)
+myTraining <- myTraining[,nzv$nzv==FALSE]
+
+nzv<- nearZeroVar(myTesting,saveMetrics=TRUE)
+myTesting <- myTesting[,nzv$nzv==FALSE]
+
+rm(nzv)
+```
+
+#### Remove columns with more than 80% entries as NAs:
+
+```{r cleanTrain}
+# Here we get the indexes of the columns having at least 80% of NA or blank values on the training dataset
+indColToRemove <- which(colSums(is.na(myTraining) | myTraining == "") > 0.8 * dim(myTraining)[1]) 
+# Remove the columns with 80% NAs
+trainNa <- myTraining[,-indColToRemove]
+# Remove the first seven columns (timestampes, unused in our analysis)
+trainNa <- trainNa[,-c(1:7)]
+dim(trainNa)
+```
+
+#### Perform the same cleaning on the test sets as on the training data:
+
+```{r cleanTest}
+# Here we get the indexes of the columns having at least 80% of NA or blank values on the testing dataset
+indColToRemove <- which(colSums(is.na(myTesting) | myTesting == "") > 0.8 * dim(myTesting)[1]) 
+# Remove the columns with 80% NAs
+testNa <- myTesting[,-indColToRemove]
+# Remove the first column from test (unused in our analysis)
+testNa <- testNa[,-1]
+dim(testNa)
+```
+
+```{r dataPartition}
+inTrainNew <- createDataPartition(trainNa$classe, p=0.75, list=FALSE)
+trainNew <- trainNa[inTrainNew,]
+testNew <- trainNa[-inTrainNew,]
+dim(trainNew)
+dim(testNew)
+```
+
+In the following sections, we will test 3 different models:
+
+1. Classification Tree
+2. Random Forest
+3. Gradient Boosted Method
+
+In order to limit the effects of overfitting, and improve the efficicency of the models, we will use cross-validation: we will use 5 folds (usually, 5 or 10 can be used, but 10 folds gives higher run times with no significant increase of the accuracy).
+
+## Classification Trees model
+
+#### Train with classification tree
+
+```{r trainClassTree}
+trControl <- trainControl(method="cv", number=5)
+model_CT <- train(classe~., data=trainNew, method="rpart", trControl=trControl)
+
+# Print your model_CT:
+fancyRpartPlot(model_CT$finalModel)
+
+# Predict using the model from trainNew on testNew & create the Confusion Matrix:
+trainPred <- predict(model_CT,newdata=testNew)
+confMatCT <- confusionMatrix(testNew$classe,trainPred)
+
+# Display confusion matrix:
+confMatCT$table
+
+# Display model accuracy:
+confMatCT$overall[1]
+```
+
+The accuracy of the Classification Tree model is low (approximately ~59%). This implies that the outcome will be poorly predicted by the other predictors.
+
+## Random Forests model
+
+#### Train with Random Forests
+
+```{r randomForests}
+model_RF <- train(classe~., data=trainNew, method="rf", trControl=trControl, verbose=FALSE)
+
+# Print your model_RF:
+print(model_RF)
+
+# Plot your model_RF:
+plot(model_RF, main = "Accuracy of Random Forests vs Number of Predictors")
+
+# Predict using the model from trainNew on testNew & create the Confusion Matrix:
+trainPred <- predict(model_RF,newdata=testNew)
+confMatRF <- confusionMatrix(testNew$classe,trainPred)
+
+# Display confusion matrix:
+confMatRF$table
+
+# Display model accuracy:
+confMatRF$overall[1]
+
+# Plot the Random Forest
+plot(model_RF$finalModel, main = "Error in Random Forest Model vs Number of Trees")
+
+# Display variable importance:
+(MostImpVars <- varImp(model_RF))
+# MostImpVars
+```
+
+The accuracy of the Random Forests model is very high (~99%) using 5-fold cross-validation. This implies that the outcome will be very well predicted by the predictors.
+
+We also see that the optimal number of predictors - say, the number of predictors giving the highest accuracy - is mtry = **26**. The accuracy not being significantly worse with all the available predictors suggests that there may be some dependencies between predictors. Using 27+ trees does not reduce the error significantly (as seen by the downword slope in Accuracy vs # of Randomly Selected Predictors).
+
+## Gradient Boosting model
+
+#### Train with Gradient Boosting
+
+```{r gradientBoosting}
+model_GBM <- train(classe~., data=trainNew, method="gbm", trControl=trControl, verbose=FALSE)
+
+# Print your model_RF:
+print(model_GBM)
+
+# Plot your model_RF:
+plot(model_GBM, main = "Accuracy of Gradient Boosting")
+
+# Predict using the model from trainNew on testNew & create the Confusion Matrix:
+trainPred <- predict(model_GBM,newdata=testNew)
+confMatGBM <- confusionMatrix(testNew$classe,trainPred)
+
+# Display confusion matrix:
+confMatGBM$table
+
+# Display model accuracy:
+confMatGBM$overall[1]
+```
+
+The accuracy of the Gradient Boosting model is also high (~95%) using 5-fold cross-validation This implies that the outcome will be very well predicted by the predictors, but is still shy of the accuracy of the Random Forests model.
+
+## Conclusion
+
+Of the three models evaluated, notably Classification Trees, Random Forest and Gradient Boosting, the Random Forest model's performance leads to the lowest error in prediction (and highest predictive ability with an accuracy of ~99%) using 5-fold cross-validation to prevent over-fitting. The Gradient Boosting model has the next lowest error with an accuracy of ~95%. Lastly, the Classification Trees has the weakest accuracy of three.
